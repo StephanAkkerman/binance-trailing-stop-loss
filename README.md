@@ -1,5 +1,5 @@
 # How to set up
-Add your public and private API keys on line 13 and 14./
+Add your public and private API keys on line 13 and 14.
 
 # How it works
 There is no user interaction necessary. If you place a stop loss order after buying a coin on Binance, the program will calculate the procentual difference between the buying price and the first stop loss.
