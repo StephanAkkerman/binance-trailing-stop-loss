@@ -260,27 +260,21 @@ def start():
     getOwned()
 
     # Start the sockets
-    bm = BinanceSocketManager(client)
     bm.start_user_socket(userInfo)
     bm.start_miniticker_socket(get1dCandles)
     bm.start()
 
-    # Print the starting time
     tijd = datetime.datetime.now().strftime("%H:%M:%S")
     print("Sockets started at " + tijd)
 
     # Maximum: after 24 hours restart (86400)
     time.sleep(86400)
 
-    # Close all sockets
-    bm.close()
-
-    # Print the stopping time
     tijd = datetime.datetime.now().strftime("%H:%M:%S")
     print("Stopped at " + tijd)
 
-    # Start again
-    start()
+    # Close the program
+    os._exit(0) 
 
 # === Start the code ===
 # So it can be run using run.py without parameters
