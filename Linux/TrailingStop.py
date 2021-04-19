@@ -2,36 +2,61 @@
 from binance.client import Client
 from binance.websockets import BinanceSocketManager
 from binance.enums import *
+import binance
 import datetime     # Used for converting time to string
 import math         # Used for calculating the precision for making orders
 import time         # Used for time.sleep
 import traceback    # Used for debugging
 import os           # Used for exiting the code, necessary for RaspberryPi restart
 import pandas as pd # Used for handling dictionaries and lists
+import numpy as np
 
 # Max 1200 requests per minute; 10 orders per second; 100,000 orders per 24hrs
-public_key = 'YOUR_PUBLIC_KEY'
-private_key = 'YOUR_PRIVATE_KEY'
+public_key = 'public key'
+private_key = 'private key'
+
 client = Client(public_key, private_key)
 
-# A single connection can listen to a maximum of 1024 streams.
-# WebSocket connections have a limit of 5 incoming messages per second
-bm = BinanceSocketManager(client)
+# Removes the last part of pair: BTCUSDT -> BTC
+def removePairing(sym):
+    # Pairs found at: https://www.binance.com/en/markets
+
+    # The pairing with a length of 4
+    if (sym[-4:] == "USDT"):
+        return(sym[:-4])
+
+    elif (sym[-4:] == "BUSD"):
+        return(sym[:-4])
+    
+    elif (sym[-4:] == "TUSD"):
+        return(sym[:-4])
+
+    elif (sym[-4:] == "USDC"):
+        return(sym[:-4])
+
+    elif (sym[-4:] == "BIDR"):
+        return(sym[:-4])
+
+    elif (sym[-4:] == "IDRT"):
+        return(sym[:-4])
+
+    elif (sym[-4:] == "BVND"):
+        return(sym[:-4])
+
+    # Otherwise the pair has a length of 3
+    else:
+        return(sym[:-3])
 
 # Returns quantity of asset, necessary for creating an order
 def getQuantity(sym): 
-    # Remove USDT & BTC
-    if (sym[-4:] == "USDT"):
-        sym = sym[:-4]
 
-    # Not if, otherwise BTCUSDT wil be nothing
-    elif (sym[-3:] == "BTC"):
-        sym = sym[:-3]
+    sym = removePairing(sym)
 
     assets = (client.get_account()).get('balances')
     for asset in assets:
         if asset['asset'] == sym:
-            # Times 0.999 sometimes it will run into issues if everything is used
+            # Return total quantity that can be used
+            # Times 0.999, otherwise there are a lot API error 2010
             return (float(asset.get('free')) + float(asset.get('locked'))) * 0.999
    
 # === Changes stop_loss_orders ===
@@ -58,8 +83,6 @@ def trailingStopLoss(sym, close):
 
     #If there is no open order, do nothing (could be replaced by making a stop-loss)
     if not openOrder:
-        # Code for making a stop-loss
-        # Use info in buy_orders
         return  
 
     # If the openOrder is not a stop loss
@@ -105,9 +128,13 @@ def trailingStopLoss(sym, close):
             # For some reason this sometimes doesn't work and gives error:
             # binance.exceptions.BinanceAPIException: APIError(code=-2011): Unknown order sent.
             try:
-                client.cancel_order(symbol = sym, orderId = current_stop_id) 
+                client.cancel_order(symbol = sym, orderId = current_stop_id)
+                print("Cancelled old stop loss")
             except Exception as e:
                 print(e)
+                print("Error cancelling old order")
+                # If order cant be cancelled, return
+                return
 
         # If new stop would be lower than the old one, exit function here
         else:
@@ -120,21 +147,39 @@ def trailingStopLoss(sym, close):
         # The same method used for tick_size
         step_size = float(client.get_symbol_info(sym)["filters"][2].get("stepSize"))
         step_precision = int(round(-math.log(step_size, 10), 0))
-        quant = round(getQuantity(sym), step_precision)
 
-        # Try placing the new stop_loss order
-        try:
-            client.create_order(symbol = sym, side = "SELL", type = "STOP_LOSS_LIMIT", quantity = quant, stopPrice = new_stop, price = limit_price, timeInForce = "GTC")
-            msg = " ".join(["STOP_LOSS_LIMIT", sym, "$" + str(close), str(new_stop), str(limit_price), "stop %", str(stop_percentage)])
-            print(msg)
+        # Convert to string, keeping it as a float will result in errors
+        limit_price = f"{np.format_float_positional(limit_price)}"
+        new_stop = f"{np.format_float_positional(new_stop)}"
 
-        # Common non-fatal errors:
-        # APIError(code=-2011): Unknown order sent.
-        # APIError(code=-2010): Account has insufficient balance for requested action.
-        except Exception as e: 
-            print(e)           
-            msg = " ".join(["Error!, Tried:","STOP_LOSS_LIMIT", sym, "$" + str(close), str(new_stop), str(limit_price), "stop %", str(stop_percentage)])
-            print(msg)       
+        # Remove "." in case of converting number like 1.0, which will result in 1.
+        if (limit_price[-1] == '.'):
+            limit_price = limit_price[:-1]
+
+        if (new_stop[-1] == '.'):
+            new_stop = new_stop[:-1]
+
+        # Try placing a stop loss order
+        for x in range (0,10): # Max 10 times
+            try:
+                quant = round((getQuantity(sym) * (0.995 ** x)), step_precision)
+                client.create_order(symbol = sym, side = "SELL", type = "STOP_LOSS_LIMIT", quantity = quant, stopPrice = new_stop, price = limit_price, timeInForce = "GTC")
+                
+                msg = " ".join(["STOP_LOSS_LIMIT", sym, "$" + str(close), str(new_stop), str(limit_price), "stop %", str(stop_percentage)])
+                print(msg)
+                break
+
+            except binance.exceptions.BinanceAPIException as e:
+                # Try again with lower quantity
+                if (e.message == "Account has insufficient balance for requested action."):
+                    print("Retrying with lower quantity, x = " + str(x))
+                    pass
+
+                # Maybe undo the latest cancelled order after it fails for 10th time
+                else:
+                    msg = " ".join(["Error at create_order, Tried:","STOP_LOSS_LIMIT", sym, "close=" + str(close), "quantity=", str(quant), "stopPrice=", str(new_stop), "price=", str(limit_price), "stop %", str(stop_percentage)])
+                    print(msg)  
+                    print(e.message)       
 
 # === Websocket interpreter ===
 def get1dCandles(info):
@@ -144,6 +189,7 @@ def get1dCandles(info):
 
         # Get the important data
         for ticker_data in owned:
+
             sym = ticker_data['s']
             close = float(ticker_data['c'])
 
@@ -180,41 +226,38 @@ def userInfo(info):
         side =  info.get('S')       # ie BUY
         orderType =  info.get('o')  # ie LIMIT, not used currently
 
-        execType =  info.get('x')   # Only importent if it's 'TRADE'
+        execType =  info.get('x')   # Can be TRADE, NEW or CANCELLED
 
-        if execType == "TRADE":             # If a new asset is Bought
+        # If something is bought add it to ownedList
+        if execType == "TRADE":             # If a trade is made succesfully
             if side == "BUY":               # If it's a sell adding is not necessary
                 if sym not in ownedList:    # Don't want it twice in list
-                    ownedList.append(sym)           
+                    ownedList.append(sym)    
+                    
                     print("Bought " + sym)
+                    print("Owning =", end =" ") 
+                    print(ownedList)
 
-            if side == "SELL":              # So the trailing stop does not get updated
-                if sym in ownedList:        # First check if it is in ownedList, otherwise this is unnecessary
+        # Remove from ownedList if it is sold
+            if side == "SELL": 
+                if sym in ownedList:        
+                    ownedList.remove(sym)
 
                     print("Sold " + sym)
+                    print("Owning =", end =" ") 
+                    print(ownedList)
 
-                    # Default pairing is USDT
-                    BTC = False
+        # If a new stop loss has been made
+        if execType == "NEW":
+            if side == "SELL":              
+                # Add to owned list if new stop loss order has been made
+                if orderType == 'STOP_LOSS_LIMIT':
+                    if sym not in ownedList:
+                        ownedList.append(sym)
 
-                    # If the last 3 characters are BTC it is a BTC pair
-                    if (sym[-3:] == "BTC"):
-                        BTC = True
-
-                    # Get the amount that is owned
-                    total = getQuantity(sym)
-
-                    # If it is a BTC pair, use BTC price to calculate value in dollar
-                    if (BTC == True):
-                        usdt_val = total * float((client.get_avg_price(symbol = sym).get('price'))) * float((client.get_avg_price(symbol = 'BTCUSDT').get('price')))
-
-                    # It is a USDT pair
-                    if (BTC == False):
-                        usdt_val = total * float((client.get_avg_price(symbol = sym).get('price')))
-
-                    # If the asset value in usdt is less than 10, then remove it
-                    if usdt_val < 10:
-                        ownedList.remove(sym)
-                        print("Removed from ownedList: " + sym)
+                        print("Added: " + sym)
+                        print("Owning =", end =" ") 
+                        print(ownedList)
 
 # ownedList keeps track of all the assets that are currently in possession
 ownedList = []
@@ -241,15 +284,17 @@ def getOwned():
         try:
             # Add the asset to ownedList
             ownedList.append(asset)
-            print(asset, end =" ") 
-
+            
         except Exception as e: 
                     # Print out all the error information
                     print(e)
                     print(traceback.format_exc())
                     print("Crashed in getOwned() at symbol:")
                     print(asset)
-    print()
+    
+    # Print everything in ownedList
+    print("Owning =", end =" ") 
+    print(ownedList)
   
 # === Start the sockets ===
 def start():
@@ -260,16 +305,19 @@ def start():
     getOwned()
 
     # Start the sockets
+    bm = BinanceSocketManager(client)
     bm.start_user_socket(userInfo)
     bm.start_miniticker_socket(get1dCandles)
     bm.start()
 
+    # Print the starting time
     tijd = datetime.datetime.now().strftime("%H:%M:%S")
     print("Sockets started at " + tijd)
 
     # Maximum: after 24 hours restart (86400)
     time.sleep(86400)
 
+    # Print the stopping time
     tijd = datetime.datetime.now().strftime("%H:%M:%S")
     print("Stopped at " + tijd)
 
