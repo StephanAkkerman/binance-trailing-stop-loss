@@ -1,5 +1,8 @@
 # How to set up
-Add your public and private API keys on line 13 and 14.
+Add your public and private API keys in the keys.py file. 
+
+# Telegram messages
+If you would like to get messages via Telegram if your stop loss is hit, follow the link in keys.py
 
 # How it works
 There is no user interaction necessary. If you place a stop loss order after buying a coin on Binance, the program will calculate the procentual difference between the buying price and the first stop loss.
