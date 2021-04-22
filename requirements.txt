@@ -1,0 +1,7 @@
+requests==2.25.1
+~umpy==1.19.4
+pandas==1.2.4
+python_binance==0.7.5
+binance==0.3
+numpy==1.20.2
+PyYAML==5.4.1
