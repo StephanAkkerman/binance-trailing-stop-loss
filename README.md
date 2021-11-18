@@ -25,7 +25,7 @@ This first stop loss is then used as a reference for further stop loss percentag
 ### Linux
 There is a problem where the sockets can be closed or restarted once they have started running.
 Unfortunately, the developer of python-binance has not fixed this problem yet.
-So to fix this problem, you need to run `$ python src/run.py` which will restart the trailing stop loss program every 24 hours.
+So to fix this problem, you need to run `$ python Linux/run.py` which will restart the trailing stop loss program every 24 hours.
 That way the sockets won't get disconnected and you won't have any issues.
 
 ### Windows & MacOS
